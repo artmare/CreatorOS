@@ -25,6 +25,8 @@
 
 Use the included root-level `render.yaml` blueprint for the API and worker, or create services manually. Render reads the service `buildCommand`, `startCommand`, `healthCheckPath`, and `envVars` from this file.
 
+The repo includes `.python-version` with `3.13` so Render does not fall back to its current default Python 3.14 runtime. The backend normalizes Supabase `postgres://` and `postgresql://` URLs to SQLAlchemy's `postgresql+psycopg://` driver and installs `psycopg[binary]`.
+
 Create a Web Service manually:
 
 ```bash
