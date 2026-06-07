@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Local env
+.env
+.env.*
+!.env.example
+
+# Build / QA artifacts
+creatoros-dashboard-*.png
+
+# OS
+.DS_Store
+Thumbs.db
