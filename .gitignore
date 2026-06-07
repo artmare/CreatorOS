@@ -18,3 +18,4 @@ creatoros-dashboard-*.png
 # OS
 .DS_Store
 Thumbs.db
+.vercel
