@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from typing import Any
 
 from sqlalchemy import func, select
@@ -13,18 +13,38 @@ from app.db.models import (
     AgentRunORM,
     AuditLogORM,
     BackgroundJobORM,
+    CalendarItemORM,
+    ContentPackORM,
     GenerationFeedbackORM,
+    GenerationORM,
     IdeaORM,
     KnowledgeChunkORM,
     KnowledgeSourceORM,
     NotificationORM,
     ProjectMemoryORM,
     ProjectORM,
+    ScriptORM,
     UsageLedgerORM,
     WorkspaceMemberORM,
     WorkspaceORM,
 )
-from app.schemas.platform import ActivityEvent, AgentRun, Idea, IdeaStatus, KnowledgeSource, Notification, Project, ProjectMemory, UsageSummary, Workspace
+from app.schemas.platform import (
+    ActivityEvent,
+    AgentRun,
+    CalendarItem,
+    ContentPack,
+    ContentPackRequest,
+    Generation,
+    Idea,
+    IdeaStatus,
+    KnowledgeSource,
+    Notification,
+    Project,
+    ProjectMemory,
+    Script,
+    UsageSummary,
+    Workspace,
+)
 
 
 def _now() -> datetime:
@@ -45,6 +65,11 @@ def as_uuid(value: str | uuid.UUID | None) -> uuid.UUID | None:
 def stable_user_uuid(user_id: str) -> uuid.UUID:
     parsed = as_uuid(user_id)
     return parsed or uuid.uuid5(uuid.NAMESPACE_URL, f"creatoros:user:{user_id}")
+
+
+def estimate_tokens(*values: object) -> int:
+    text = " ".join(str(value) for value in values if value is not None)
+    return max(1, len(text) // 4)
 
 
 class PlatformRepository:
@@ -85,15 +110,39 @@ class PlatformRepository:
                 past_successful_scripts=["You are not lazy. You repeat a weak version of yourself."],
             )
         )
+        idea = IdeaORM(
+            workspace_id=workspace.id,
+            project_id=project.id,
+            title="Why discipline fails when your environment protects weak habits",
+            description="Show the conflict between wanting growth and defending comfort.",
+            format="YouTube long",
+            score=88,
+            status=IdeaStatus.approved.value,
+        )
+        db.add(idea)
+        db.flush()
+        script = ScriptORM(
+            workspace_id=workspace.id,
+            project_id=project.id,
+            idea_id=idea.id,
+            title="Discipline fails when comfort owns your environment",
+            body="Hook: You do not need more motivation. You need fewer exits.\n\nBuild the video around one clear rule, one visible consequence, and one action the viewer can do today.",
+            status="ready",
+            growth_score={"overall": 84, "hook": 88, "clarity": 90},
+            export_state="markdown_ready",
+        )
+        db.add(script)
+        db.flush()
         db.add(
-            IdeaORM(
+            CalendarItemORM(
                 workspace_id=workspace.id,
                 project_id=project.id,
-                title="Why discipline fails when your environment protects weak habits",
-                description="Show the conflict between wanting growth and defending comfort.",
-                format="YouTube long",
-                score=88,
-                status=IdeaStatus.approved.value,
+                idea_id=idea.id,
+                script_id=script.id,
+                title=script.title,
+                platform="YouTube",
+                status="script_ready",
+                metadata_json={"source": "demo_seed"},
             )
         )
         db.commit()
@@ -202,6 +251,23 @@ class PlatformRepository:
         db.refresh(row)
         return self._memory(row)
 
+    def append_memory_rule(self, db: Session, project_id: str, rule: str, tone: str | None = None) -> ProjectMemory | None:
+        parsed = as_uuid(project_id)
+        if parsed is None:
+            return None
+        row = db.get(ProjectMemoryORM, parsed)
+        if row is None:
+            return None
+        rules = list(row.content_rules or [])
+        rules.append(rule)
+        row.content_rules = rules
+        if tone:
+            row.tone = tone
+        row.updated_at = _now()
+        db.commit()
+        db.refresh(row)
+        return self._memory(row)
+
     def list_knowledge(self, db: Session, user: CurrentUser) -> list[KnowledgeSource]:
         self.ensure_demo_workspace(db, user)
         rows = db.scalars(select(KnowledgeSourceORM).order_by(KnowledgeSourceORM.created_at.desc())).all()
@@ -252,6 +318,31 @@ class PlatformRepository:
         rows = db.scalars(select(IdeaORM).order_by(IdeaORM.created_at.desc())).all()
         return [self._idea(row) for row in rows]
 
+    def create_idea(self, db: Session, user: CurrentUser, payload: dict[str, Any]) -> Idea | None:
+        project_id = as_uuid(payload.get("project_id"))
+        if project_id is None:
+            return None
+        project = db.get(ProjectORM, project_id)
+        if project is None:
+            return None
+        status = IdeaStatus(payload.get("status") or IdeaStatus.draft.value)
+        row = IdeaORM(
+            workspace_id=project.workspace_id,
+            project_id=project.id,
+            title=payload.get("title") or "Untitled idea",
+            description=payload.get("description") or "",
+            format=payload.get("format") or "YouTube",
+            score=int(payload.get("score") or 0),
+            status=status.value,
+        )
+        db.add(row)
+        db.flush()
+        self._add_activity(db, project.workspace_id, user.email, "created idea", "idea", row.id)
+        self._add_audit(db, project.workspace_id, user, "idea.created", "idea", row.id, {"status": status.value})
+        db.commit()
+        db.refresh(row)
+        return self._idea(row)
+
     def update_idea_status(self, db: Session, idea_id: str, status: IdeaStatus) -> Idea | None:
         parsed = as_uuid(idea_id)
         if parsed is None:
@@ -260,6 +351,14 @@ class PlatformRepository:
         if row is None:
             return None
         row.status = status.value
+        if status == IdeaStatus.rejected:
+            memory = db.get(ProjectMemoryORM, row.project_id)
+            if memory:
+                rejected = list(memory.rejected_ideas or [])
+                if row.title not in rejected:
+                    rejected.append(row.title)
+                memory.rejected_ideas = rejected
+                memory.updated_at = _now()
         db.commit()
         db.refresh(row)
         return self._idea(row)
@@ -378,6 +477,23 @@ class PlatformRepository:
         db.add(row)
         db.flush()
         db.add(
+            GenerationORM(
+                workspace_id=project.workspace_id,
+                project_id=project.id,
+                agent_run_id=row.id,
+                type=f"agent:{run.agent_name}",
+                prompt=str(run.input.get("prompt") or run.input.get("message") or ""),
+                result=run.result,
+                model=run.model,
+                token_estimate=run.token_estimate,
+                cost_estimate=run.cost_estimate,
+                validation_status=run.validation_status,
+                feedback_status=None,
+                export_state="markdown_ready",
+                created_at=run.created_at,
+            )
+        )
+        db.add(
             UsageLedgerORM(
                 workspace_id=project.workspace_id,
                 user_id=stable_user_uuid(user.id),
@@ -402,9 +518,281 @@ class PlatformRepository:
             "status": row.status,
         }
 
+    def record_content_pack(
+        self,
+        db: Session,
+        user: CurrentUser,
+        pack: ContentPack,
+        request: ContentPackRequest,
+    ) -> dict[str, Any] | None:
+        project_id = as_uuid(request.project_id)
+        if project_id is None:
+            return None
+        project = db.get(ProjectORM, project_id)
+        if project is None:
+            return None
+
+        idea = IdeaORM(
+            workspace_id=project.workspace_id,
+            project_id=project.id,
+            title=pack.idea.title,
+            description=pack.idea.description,
+            format=pack.idea.format,
+            score=pack.idea.score,
+            status=pack.idea.status.value,
+        )
+        db.add(idea)
+        db.flush()
+
+        payload = pack.model_dump(mode="json")
+        payload["project_id"] = str(project.id)
+        payload["idea"]["id"] = str(idea.id)
+        payload["idea"]["project_id"] = str(project.id)
+
+        content_pack = ContentPackORM(
+            workspace_id=project.workspace_id,
+            project_id=project.id,
+            topic=request.topic,
+            payload=payload,
+        )
+        db.add(content_pack)
+        db.flush()
+        payload["id"] = str(content_pack.id)
+
+        token_count = estimate_tokens(request.topic, payload)
+        cost = round(token_count * 0.000002, 6)
+        generation = GenerationORM(
+            workspace_id=project.workspace_id,
+            project_id=project.id,
+            agent_run_id=None,
+            type="content_pack",
+            prompt=request.topic,
+            result=payload,
+            model="creatoros-orchestrator-local",
+            token_estimate=token_count,
+            cost_estimate=cost,
+            validation_status="pass",
+            feedback_status=None,
+            export_state="markdown_ready",
+            created_at=pack.created_at,
+        )
+        db.add(generation)
+        db.flush()
+        payload["generation_id"] = str(generation.id)
+
+        script = ScriptORM(
+            workspace_id=project.workspace_id,
+            project_id=project.id,
+            idea_id=idea.id,
+            generation_id=generation.id,
+            title=pack.titles[0] if pack.titles else request.topic,
+            body=pack.youtube_script,
+            status="ready",
+            growth_score=pack.growth_score.model_dump(mode="json"),
+            export_state="markdown_ready",
+        )
+        db.add(script)
+        db.flush()
+        payload["script_id"] = str(script.id)
+
+        if request.add_to_calendar:
+            scheduled_for = None
+            if request.publish_date:
+                scheduled_for = datetime.combine(request.publish_date, time(hour=9), tzinfo=timezone.utc)
+            calendar = CalendarItemORM(
+                workspace_id=project.workspace_id,
+                project_id=project.id,
+                idea_id=idea.id,
+                script_id=script.id,
+                title=script.title,
+                platform="YouTube",
+                scheduled_for=scheduled_for,
+                status="script_ready",
+                metadata_json={"content_pack_id": str(content_pack.id), "generation_id": str(generation.id)},
+            )
+            db.add(calendar)
+            db.flush()
+            payload["calendar_item"] = {
+                "id": str(calendar.id),
+                "workspace_id": str(project.workspace_id),
+                "project_id": str(project.id),
+                "idea_id": str(idea.id),
+                "script_id": str(script.id),
+                "title": script.title,
+                "platform": "YouTube",
+                "scheduled_for": scheduled_for.isoformat() if scheduled_for else None,
+                "status": "script_ready",
+                "metadata": {"content_pack_id": str(content_pack.id), "generation_id": str(generation.id)},
+                "created_at": _now().isoformat(),
+            }
+
+        content_pack.payload = payload
+        generation.result = payload
+        db.add(
+            UsageLedgerORM(
+                workspace_id=project.workspace_id,
+                user_id=stable_user_uuid(user.id),
+                generation_type="content_pack",
+                model="creatoros-orchestrator-local",
+                token_estimate=token_count,
+                cost_estimate=cost,
+                blocked=False,
+            )
+        )
+        self._add_activity(db, project.workspace_id, user.email, "created content pack", "content_pack", content_pack.id)
+        self._add_notification(
+            db,
+            project.workspace_id,
+            "Content pack ready",
+            f"The pack for '{request.topic}' is ready.",
+            "generation_completed",
+        )
+        self._add_audit(db, project.workspace_id, user, "content_pack.generated", "content_pack", content_pack.id, {"topic": request.topic})
+        db.commit()
+        return payload
+
+    def list_content_packs(self, db: Session, user: CurrentUser) -> list[dict[str, Any]]:
+        self.ensure_demo_workspace(db, user)
+        rows = db.scalars(select(ContentPackORM).order_by(ContentPackORM.created_at.desc()).limit(100)).all()
+        return [
+            {
+                **row.payload,
+                "id": str(row.id),
+                "workspace_id": str(row.workspace_id),
+                "project_id": str(row.project_id),
+                "topic": row.topic,
+                "created_at": row.created_at,
+            }
+            for row in rows
+        ]
+
+    def list_generations(self, db: Session, user: CurrentUser) -> list[Generation]:
+        self.ensure_demo_workspace(db, user)
+        rows = db.scalars(select(GenerationORM).order_by(GenerationORM.created_at.desc()).limit(100)).all()
+        return [
+            Generation(
+                id=str(row.id),
+                workspace_id=str(row.workspace_id),
+                project_id=str(row.project_id),
+                type=row.type,
+                prompt=row.prompt,
+                result=row.result,
+                model=row.model,
+                token_estimate=row.token_estimate,
+                cost_estimate=float(row.cost_estimate),
+                validation_status=row.validation_status,
+                feedback_status=row.feedback_status,
+                created_at=row.created_at,
+            )
+            for row in rows
+        ]
+
+    def list_scripts(self, db: Session, user: CurrentUser) -> list[Script]:
+        self.ensure_demo_workspace(db, user)
+        rows = db.scalars(select(ScriptORM).order_by(ScriptORM.created_at.desc()).limit(100)).all()
+        return [self._script(row) for row in rows]
+
+    def create_script(self, db: Session, user: CurrentUser, payload: dict[str, Any]) -> Script | None:
+        project_id = as_uuid(payload.get("project_id"))
+        if project_id is None:
+            return None
+        project = db.get(ProjectORM, project_id)
+        if project is None:
+            return None
+        row = ScriptORM(
+            workspace_id=project.workspace_id,
+            project_id=project.id,
+            idea_id=as_uuid(payload.get("idea_id")),
+            generation_id=as_uuid(payload.get("generation_id")),
+            title=payload.get("title") or "Untitled script",
+            body=payload.get("body") or "",
+            status=payload.get("status") or "draft",
+            growth_score=payload.get("growth_score") or {},
+            export_state="markdown_ready",
+        )
+        db.add(row)
+        db.flush()
+        self._add_activity(db, project.workspace_id, user.email, "created script", "script", row.id)
+        self._add_audit(db, project.workspace_id, user, "script.created", "script", row.id, {"status": row.status})
+        db.commit()
+        db.refresh(row)
+        return self._script(row)
+
+    def update_script(self, db: Session, user: CurrentUser, script_id: str, payload: dict[str, Any]) -> Script | None:
+        row_id = as_uuid(script_id)
+        if row_id is None:
+            return None
+        row = db.get(ScriptORM, row_id)
+        if row is None:
+            return None
+        for key in ["title", "body", "status", "growth_score", "export_state"]:
+            if key in payload:
+                setattr(row, key, payload[key])
+        row.updated_at = _now()
+        self._add_audit(db, row.workspace_id, user, "script.updated", "script", row.id, {"status": row.status})
+        db.commit()
+        db.refresh(row)
+        return self._script(row)
+
+    def list_calendar_items(self, db: Session, user: CurrentUser) -> list[CalendarItem]:
+        self.ensure_demo_workspace(db, user)
+        rows = db.scalars(select(CalendarItemORM).order_by(CalendarItemORM.created_at.desc()).limit(100)).all()
+        return [self._calendar_item(row) for row in rows]
+
+    def create_calendar_item(self, db: Session, user: CurrentUser, payload: dict[str, Any]) -> CalendarItem | None:
+        project_id = as_uuid(payload.get("project_id"))
+        if project_id is None:
+            return None
+        project = db.get(ProjectORM, project_id)
+        if project is None:
+            return None
+        row = CalendarItemORM(
+            workspace_id=project.workspace_id,
+            project_id=project.id,
+            idea_id=as_uuid(payload.get("idea_id")),
+            script_id=as_uuid(payload.get("script_id")),
+            title=payload.get("title") or "Untitled calendar item",
+            platform=payload.get("platform") or "YouTube",
+            scheduled_for=payload.get("scheduled_for"),
+            status=payload.get("status") or "idea",
+            metadata_json=payload.get("metadata") or {},
+        )
+        db.add(row)
+        db.flush()
+        self._add_activity(db, project.workspace_id, user.email, "created calendar item", "calendar_item", row.id)
+        self._add_audit(db, project.workspace_id, user, "calendar_item.created", "calendar_item", row.id, {"status": row.status})
+        db.commit()
+        db.refresh(row)
+        return self._calendar_item(row)
+
+    def update_calendar_item(self, db: Session, user: CurrentUser, item_id: str, payload: dict[str, Any]) -> CalendarItem | None:
+        row_id = as_uuid(item_id)
+        if row_id is None:
+            return None
+        row = db.get(CalendarItemORM, row_id)
+        if row is None:
+            return None
+        for key, attr in [
+            ("title", "title"),
+            ("platform", "platform"),
+            ("scheduled_for", "scheduled_for"),
+            ("status", "status"),
+            ("metadata", "metadata_json"),
+        ]:
+            if key in payload:
+                setattr(row, attr, payload[key])
+        row.updated_at = _now()
+        self._add_audit(db, row.workspace_id, user, "calendar_item.updated", "calendar_item", row.id, {"status": row.status})
+        db.commit()
+        db.refresh(row)
+        return self._calendar_item(row)
+
     def record_feedback(self, db: Session, user: CurrentUser, generation_id: str, action: str, note: str | None) -> dict[str, Any] | None:
         parsed_generation = as_uuid(generation_id)
         if parsed_generation is None:
+            return None
+        generation = db.get(GenerationORM, parsed_generation)
+        if generation is None:
             return None
         row = GenerationFeedbackORM(
             generation_id=parsed_generation,
@@ -413,6 +801,30 @@ class PlatformRepository:
             note=note,
         )
         db.add(row)
+        generation.feedback_status = action
+        if action == "save_to_style":
+            memory = db.get(ProjectMemoryORM, generation.project_id)
+            if memory:
+                rules = list(memory.content_rules or [])
+                rules.append(note or "User marked this output as part of the creator style.")
+                memory.content_rules = rules
+                memory.updated_at = _now()
+        if action == "use_in_calendar":
+            title = str(generation.result.get("topic") or generation.prompt or "Generation follow-up")
+            db.add(
+                CalendarItemORM(
+                    workspace_id=generation.workspace_id,
+                    project_id=generation.project_id,
+                    title=title,
+                    platform="YouTube",
+                    status="script_ready",
+                    metadata_json={"generation_id": str(generation.id), "source": "feedback"},
+                )
+            )
+        if action == "regenerate":
+            self._add_notification(db, generation.workspace_id, "Regeneration requested", "A new version can be queued from this feedback.", "feedback")
+        self._add_activity(db, generation.workspace_id, user.email, "added generation feedback", "generation", generation.id)
+        self._add_audit(db, generation.workspace_id, user, "generation.feedback", "generation", generation.id, {"action": action})
         db.commit()
         db.refresh(row)
         return {
@@ -423,6 +835,20 @@ class PlatformRepository:
             "user_id": str(row.user_id),
             "created_at": row.created_at,
         }
+
+    def list_feedback(self, db: Session) -> list[dict[str, Any]]:
+        rows = db.scalars(select(GenerationFeedbackORM).order_by(GenerationFeedbackORM.created_at.desc()).limit(100)).all()
+        return [
+            {
+                "id": str(row.id),
+                "generation_id": str(row.generation_id),
+                "user_id": str(row.user_id),
+                "action": row.action,
+                "note": row.note,
+                "created_at": row.created_at,
+            }
+            for row in rows
+        ]
 
     def list_jobs(self, db: Session, user: CurrentUser) -> list[dict[str, Any]]:
         self.ensure_demo_workspace(db, user)
@@ -507,6 +933,36 @@ class PlatformRepository:
             created_at=row.created_at,
         )
 
+    def _script(self, row: ScriptORM) -> Script:
+        return Script(
+            id=str(row.id),
+            workspace_id=str(row.workspace_id),
+            project_id=str(row.project_id),
+            idea_id=str(row.idea_id) if row.idea_id else None,
+            generation_id=str(row.generation_id) if row.generation_id else None,
+            title=row.title,
+            body=row.body,
+            status=row.status,
+            growth_score=row.growth_score or {},
+            export_state=row.export_state,
+            created_at=row.created_at,
+        )
+
+    def _calendar_item(self, row: CalendarItemORM) -> CalendarItem:
+        return CalendarItem(
+            id=str(row.id),
+            workspace_id=str(row.workspace_id),
+            project_id=str(row.project_id),
+            idea_id=str(row.idea_id) if row.idea_id else None,
+            script_id=str(row.script_id) if row.script_id else None,
+            title=row.title,
+            platform=row.platform,
+            scheduled_for=row.scheduled_for,
+            status=row.status,
+            metadata=row.metadata_json or {},
+            created_at=row.created_at,
+        )
+
     def _job(self, row: BackgroundJobORM) -> dict[str, Any]:
         return {
             "id": str(row.id),
@@ -518,6 +974,57 @@ class PlatformRepository:
             "error": row.error,
             "created_at": row.created_at,
         }
+
+    def _add_activity(
+        self,
+        db: Session,
+        workspace_id: uuid.UUID,
+        actor: str,
+        verb: str,
+        object_type: str,
+        object_id: uuid.UUID | None,
+    ) -> None:
+        db.add(
+            ActivityEventORM(
+                workspace_id=workspace_id,
+                actor=actor,
+                verb=verb,
+                object_type=object_type,
+                object_id=object_id,
+            )
+        )
+
+    def _add_notification(self, db: Session, workspace_id: uuid.UUID, title: str, body: str, kind: str) -> None:
+        db.add(
+            NotificationORM(
+                workspace_id=workspace_id,
+                title=title,
+                body=body,
+                kind=kind,
+                read=False,
+            )
+        )
+
+    def _add_audit(
+        self,
+        db: Session,
+        workspace_id: uuid.UUID | None,
+        user: CurrentUser,
+        action: str,
+        object_type: str,
+        object_id: uuid.UUID | None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        db.add(
+            AuditLogORM(
+                workspace_id=workspace_id,
+                actor_user_id=stable_user_uuid(user.id),
+                action=action,
+                object_type=object_type,
+                object_id=object_id,
+                metadata_json=metadata or {},
+            )
+        )
 
 
 repository = PlatformRepository()

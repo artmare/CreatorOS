@@ -2,11 +2,11 @@
 
 CreatorOS now has the platform contracts required for a real B2B SaaS deployment:
 
-- Workspace-scoped data model for users, projects, memory, knowledge, content packs, generations, usage, feedback, jobs, notifications, errors, audit logs, and subscriptions.
+- Workspace-scoped data model for users, projects, memory, knowledge, content packs, generations, scripts, calendar items, usage, feedback, jobs, notifications, errors, audit logs, and subscriptions.
 - Supabase Auth boundary with JWT validation when `SUPABASE_JWT_SECRET` is configured.
 - Row Level Security policies and indexes for workspace membership and high-volume listing paths.
 - Usage ledger and cost estimation for every agent run.
-- Persistent workspace/project/memory/knowledge/job routes backed by SQLAlchemy and Supabase Postgres migrations.
+- Persistent workspace/project/memory/knowledge/content pack/generation/script/calendar/feedback/job routes backed by SQLAlchemy and Supabase Postgres migrations.
 - Idempotent background job API for long-running generations, integrations, exports, and reminders.
 - Admin API protected by role checks.
 - Render blueprint for API and worker services.
@@ -23,7 +23,7 @@ CreatorOS now has the platform contracts required for a real B2B SaaS deployment
 
 ## Launch Checklist
 
-1. Create Supabase project and apply both SQL migrations.
+1. Create Supabase project and apply all SQL migrations in order.
 2. Configure Vercel env vars for frontend public API/Supabase values.
 3. Deploy Render blueprint and set backend secrets.
 4. Configure Upstash Redis URL for API and worker.

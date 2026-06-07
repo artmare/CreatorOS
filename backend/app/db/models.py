@@ -157,6 +157,52 @@ class ContentPackORM(Base):
     created_at: Mapped[object] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class ScriptORM(Base):
+    __tablename__ = "scripts"
+    __table_args__ = (
+        CheckConstraint(
+            "status in ('draft','ready','approved','scheduled','published','archived')",
+            name="script_status_check",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    project_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    idea_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("ideas.id", ondelete="SET NULL"))
+    generation_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("generations.id", ondelete="SET NULL"))
+    title: Mapped[str] = mapped_column(String(260), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    growth_score: Mapped[dict] = json_column(dict)
+    export_state: Mapped[str | None] = mapped_column(String(40))
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[object] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class CalendarItemORM(Base):
+    __tablename__ = "calendar_items"
+    __table_args__ = (
+        CheckConstraint(
+            "status in ('idea','script_ready','filming','editing','published','analyzed','archived')",
+            name="calendar_item_status_check",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    project_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    idea_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("ideas.id", ondelete="SET NULL"))
+    script_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("scripts.id", ondelete="SET NULL"))
+    title: Mapped[str] = mapped_column(String(260), nullable=False)
+    platform: Mapped[str] = mapped_column(String(80), nullable=False)
+    scheduled_for: Mapped[object | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="idea")
+    metadata_json: Mapped[dict] = mapped_column("metadata", JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[object] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class UsageLedgerORM(Base):
     __tablename__ = "usage_ledger"
 
@@ -262,6 +308,9 @@ Index("idx_projects_workspace", ProjectORM.workspace_id, ProjectORM.created_at)
 Index("idx_ideas_workspace_status", IdeaORM.workspace_id, IdeaORM.status, IdeaORM.created_at)
 Index("idx_agent_runs_workspace_created", AgentRunORM.workspace_id, AgentRunORM.created_at)
 Index("idx_generations_workspace_created", GenerationORM.workspace_id, GenerationORM.created_at)
+Index("idx_content_packs_workspace_created", ContentPackORM.workspace_id, ContentPackORM.created_at)
+Index("idx_scripts_workspace_status_created", ScriptORM.workspace_id, ScriptORM.status, ScriptORM.created_at)
+Index("idx_calendar_items_workspace_status_scheduled", CalendarItemORM.workspace_id, CalendarItemORM.status, CalendarItemORM.scheduled_for)
 Index("idx_usage_ledger_workspace_month", UsageLedgerORM.workspace_id, UsageLedgerORM.created_at)
 Index("idx_notifications_workspace_read", NotificationORM.workspace_id, NotificationORM.read, NotificationORM.created_at)
 Index("idx_audit_logs_workspace_created", AuditLogORM.workspace_id, AuditLogORM.created_at)

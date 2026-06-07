@@ -13,28 +13,28 @@ def generate_content_pack(request: ContentPackRequest) -> ContentPack:
     repurpose_run = orchestrator.run_agent("repurposer", request.project_id, request.topic, "content_pack")
 
     idea = store.add_idea(
-        title=f"{request.topic}: почему это ломает рост канала",
+        title=f"{request.topic}: why this blocks channel growth",
         description=idea_run.result["text"],
         format="Content Pack",
         score=89,
         status=IdeaStatus.approved,
     )
     titles = [
-        f"Почему {request.topic} сильнее, чем мотивация",
-        f"Ты проигрываешь не из-за лени. Вот настоящая причина",
-        f"Одна ошибка, которая убивает дисциплину",
-        f"Как собрать себя, когда никто не контролирует",
-        f"Перестань ждать настрой. Поставь правило",
+        f"Why {request.topic} beats motivation",
+        "You are not losing because you are lazy. Here is the real reason",
+        "One mistake that quietly kills discipline",
+        "How to rebuild control when nobody is watching",
+        "Stop waiting for the mood. Set the rule",
     ]
     shorts = [
-        "Ты не ленивый. Ты просто каждый день повторяешь слабый сценарий.",
-        "Дисциплина начинается не утром. Она начинается вечером, когда ты убираешь соблазн.",
-        "Если цель не записана в календарь, это фантазия.",
-        "Слабая привычка всегда просит еще один день.",
-        "Не ищи мотивацию. Сделай среду, где провалиться сложнее.",
+        "You are not lazy. You keep repeating a weak script.",
+        "Discipline starts the night before, when you remove the easiest excuse.",
+        "If the goal is not on the calendar, it is still a fantasy.",
+        "A weak habit always asks for one more day.",
+        "Do not chase motivation. Build an environment where failure is harder.",
     ]
     script = script_run.result["text"]
-    telegram_post = f"{repurpose_run.result['text']}\n\nЗадание: выбери одно правило по теме «{request.topic}» и держи его 7 дней."
+    telegram_post = f"{repurpose_run.result['text']}\n\nChallenge: choose one rule about '{request.topic}' and hold it for 7 days."
     growth_score = score_content(titles[0], f"{script}\n{hook_run.result['text']}")
     calendar_item = None
     if request.add_to_calendar:
@@ -60,6 +60,6 @@ def generate_content_pack(request: ContentPackRequest) -> ContentPack:
         calendar_item=calendar_item,
         created_at=datetime.now(timezone.utc),
     )
-    store.add_notification("Content Pack готов", f"Пак по теме «{request.topic}» создан.", "generation_completed")
+    store.add_notification("Content pack ready", f"The pack for '{request.topic}' is ready.", "generation_completed")
     store.content_packs[pack.id] = pack
     return pack

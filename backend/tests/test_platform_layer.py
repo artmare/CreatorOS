@@ -78,6 +78,17 @@ def test_persistent_workspace_project_memory_and_knowledge_flow():
     assert source.status_code == 200
     assert source.json()["project_id"] == project_payload["id"]
 
+    style = client.post(
+        "/api/v1/style/analyze",
+        json={
+            "project_id": project_payload["id"],
+            "text": "Discipline is not a mood. It is a rule you keep when comfort starts negotiating.",
+        },
+    )
+    assert style.status_code == 200
+    updated_memory = client.get(f"/api/v1/project-memory?project_id={project_payload['id']}")
+    assert any("Style analysis" in rule for rule in updated_memory.json()["content_rules"])
+
 
 def test_persistent_agent_run_updates_usage_ledger():
     workspace = client.post("/api/v1/workspaces", json={"name": "QA Agent Workspace"})
@@ -109,6 +120,97 @@ def test_persistent_agent_run_updates_usage_ledger():
     assert after >= before + 1
 
 
+def test_content_pack_persists_generation_script_calendar_and_feedback():
+    workspace = client.post("/api/v1/workspaces", json={"name": "QA Pack Workspace"})
+    project = client.post(
+        "/api/v1/projects",
+        json={
+            "workspace_id": workspace.json()["id"],
+            "name": "QA Pack Project",
+            "niche": "B2B creators",
+            "platform": "YouTube",
+            "goal": "ship weekly packs",
+            "audience": "founders",
+            "tone": "sharp",
+        },
+    )
+    project_id = project.json()["id"]
+
+    response = client.post(
+        "/api/v1/content-factory/generate-pack",
+        json={
+            "project_id": project_id,
+            "topic": "discipline after a failed launch",
+            "add_to_calendar": True,
+            "publish_date": "2026-06-15",
+        },
+    )
+    assert response.status_code == 200
+    pack = response.json()
+    assert pack["project_id"] == project_id
+    assert pack["generation_id"]
+    assert pack["script_id"]
+    assert pack["calendar_item"]["status"] == "script_ready"
+
+    packs = client.get("/api/v1/content-factory/packs")
+    assert any(item["id"] == pack["id"] for item in packs.json())
+
+    scripts = client.get("/api/v1/scripts")
+    assert any(item["id"] == pack["script_id"] for item in scripts.json())
+
+    calendar = client.get("/api/v1/calendar")
+    assert any(item["id"] == pack["calendar_item"]["id"] for item in calendar.json())
+
+    feedback = client.post(
+        f"/api/v1/generations/{pack['generation_id']}/feedback",
+        json={"action": "save_to_style", "note": "Keep the blunt opener and one concrete rule."},
+    )
+    assert feedback.status_code == 200
+    assert feedback.json()["generation_id"] == pack["generation_id"]
+
+    memory = client.get(f"/api/v1/project-memory?project_id={project_id}")
+    assert "Keep the blunt opener and one concrete rule." in memory.json()["content_rules"]
+
+
+def test_auth_scripts_and_calendar_endpoints():
+    me = client.get("/api/v1/auth/me")
+    assert me.status_code == 200
+    assert me.json()["email"] == "artem@example.com"
+
+    workspace = client.post("/api/v1/workspaces", json={"name": "QA Script Workspace"})
+    project = client.post(
+        "/api/v1/projects",
+        json={
+            "workspace_id": workspace.json()["id"],
+            "name": "QA Script Project",
+            "niche": "ops",
+            "platform": "YouTube",
+            "goal": "publish",
+            "audience": "teams",
+            "tone": "calm",
+        },
+    )
+    script = client.post(
+        "/api/v1/scripts",
+        json={"project_id": project.json()["id"], "title": "Launch review", "body": "Hook. Body. CTA.", "status": "ready"},
+    )
+    assert script.status_code == 200
+    assert script.json()["status"] == "ready"
+
+    calendar = client.post(
+        "/api/v1/calendar",
+        json={
+            "project_id": project.json()["id"],
+            "script_id": script.json()["id"],
+            "title": "Launch review",
+            "platform": "YouTube",
+            "status": "script_ready",
+        },
+    )
+    assert calendar.status_code == 200
+    assert calendar.json()["script_id"] == script.json()["id"]
+
+
 def test_idea_status_transition_creates_audit_log():
     idea_id = next(iter(store.ideas))
     response = client.patch(f"/api/v1/idea-vault/{idea_id}/status", json={"status": "promising"})
@@ -133,6 +235,8 @@ def test_production_orm_contains_scale_tables():
         "knowledge_sources",
         "knowledge_chunks",
         "content_packs",
+        "scripts",
+        "calendar_items",
         "ideas",
         "agent_runs",
         "generations",

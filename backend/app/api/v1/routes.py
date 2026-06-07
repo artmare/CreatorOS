@@ -5,10 +5,12 @@ from app.core.auth import CurrentUser, get_admin_user, get_current_user
 from app.db.session import get_db
 from app.schemas.platform import (
     AgentGenerateRequest,
+    CalendarItemRequest,
     ContentPackRequest,
     FeedbackRequest,
     IdeaStatus,
     OrchestratorRequest,
+    ScriptRequest,
     StyleAnalyzeRequest,
 )
 from app.services.agents.orchestrator import orchestrator
@@ -32,6 +34,11 @@ def ensure_agent_memory(project_id: str, db: Session) -> None:
     memory = repository.get_memory(db, project_id)
     if memory:
         store.memories[project_id] = memory
+
+
+@router.get("/auth/me")
+def auth_me(user: CurrentUser = Depends(get_current_user)):
+    return {"id": user.id, "email": user.email, "role": user.role, "workspace_id": user.workspace_id}
 
 
 @router.get("/workspaces")
@@ -118,6 +125,25 @@ def idea_vault(user: CurrentUser = Depends(get_current_user), db: Session = Depe
     return persisted or list(store.ideas.values())
 
 
+@router.post("/idea-vault")
+def create_idea(payload: dict, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    persisted = repository.create_idea(db, user, payload)
+    if persisted:
+        events.activity(user, "created idea", "idea", persisted.id)
+        events.audit(user, "idea.created", "idea", persisted.id, {"status": persisted.status.value})
+        return persisted
+    idea = store.add_idea(
+        title=payload.get("title", "Untitled idea"),
+        description=payload.get("description", ""),
+        format=payload.get("format", "YouTube"),
+        score=int(payload.get("score", 0)),
+        status=IdeaStatus(payload.get("status", "draft")),
+    )
+    events.activity(user, "created idea", "idea", idea.id)
+    events.audit(user, "idea.created", "idea", idea.id, {"status": idea.status.value})
+    return idea
+
+
 @router.patch("/idea-vault/{idea_id}/status")
 def update_idea_status(idea_id: str, payload: dict, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     new_status = IdeaStatus(payload["status"])
@@ -139,8 +165,20 @@ def update_idea_status(idea_id: str, payload: dict, user: CurrentUser = Depends(
 def content_factory(request: ContentPackRequest, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     ensure_agent_memory(request.project_id, db)
     pack = generate_content_pack(request)
+    persisted = repository.record_content_pack(db, user, pack, request)
+    if persisted:
+        events.activity(user, "created content pack", "content_pack", persisted["id"])
+        events.notify(user, "Content pack ready", f"The pack for '{request.topic}' is ready.", "generation_completed")
+        events.audit(user, "content_pack.generated", "content_pack", persisted["id"], {"topic": request.topic})
+        return persisted
     events.audit(user, "content_pack.generated", "content_pack", pack.id, {"topic": request.topic})
     return pack
+
+
+@router.get("/content-factory/packs")
+def content_packs(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    persisted = repository.list_content_packs(db, user)
+    return persisted or list(store.content_packs.values())
 
 
 @router.post("/orchestrator/produce")
@@ -169,7 +207,13 @@ def agent_runs(user: CurrentUser = Depends(get_current_user), db: Session = Depe
 
 
 @router.post("/generations/{generation_id}/feedback")
-def generation_feedback(generation_id: str, request: FeedbackRequest, user: CurrentUser = Depends(get_current_user)):
+def generation_feedback(generation_id: str, request: FeedbackRequest, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    persisted = repository.record_feedback(db, user, generation_id, request.action.value, request.note)
+    if persisted:
+        if request.action == "use_in_calendar":
+            events.notify(user, "Added to calendar", "The generation was marked for the content calendar.", "calendar")
+        events.audit(user, "generation.feedback", "generation", generation_id, {"action": request.action.value})
+        return persisted
     record = {"generation_id": generation_id, "action": request.action, "note": request.note, "user_id": user.id}
     store.feedback.append(record)
     if request.action == "save_to_style":
@@ -183,13 +227,13 @@ def generation_feedback(generation_id: str, request: FeedbackRequest, user: Curr
 @router.get("/activity")
 def activity(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     persisted = repository.list_activity(db, user)
-    return persisted or store.activity
+    return persisted + store.activity
 
 
 @router.get("/notifications")
 def notifications(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     persisted = repository.list_notifications(db, user)
-    return persisted or store.notifications
+    return persisted + store.notifications
 
 
 @router.patch("/notifications/{notification_id}/read")
@@ -218,7 +262,8 @@ def growth_score(payload: dict, user: CurrentUser = Depends(get_current_user)):
 
 
 @router.post("/style/analyze")
-def style_analyze(request: StyleAnalyzeRequest, user: CurrentUser = Depends(get_current_user)):
+def style_analyze(request: StyleAnalyzeRequest, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    ensure_agent_memory(request.project_id, db)
     text = request.text
     normalized = text.lower()
     direct_markers = ["weak", "discipline", "\u0441\u043b\u0430\u0431", "\u0434\u0438\u0441\u0446\u0438\u043f\u043b\u0438\u043d"]
@@ -229,9 +274,62 @@ def style_analyze(request: StyleAnalyzeRequest, user: CurrentUser = Depends(get_
         "energy": "high" if len(text) > 500 else "medium",
         "quality": validate_output(text),
     }
-    store.memories[request.project_id].content_rules.append(f"Style analysis: {style['tone']}")
+    rule = f"Style analysis: {style['tone']}; energy={style['energy']}"
+    persisted_memory = repository.append_memory_rule(db, request.project_id, rule, style["tone"])
+    if persisted_memory:
+        store.memories[request.project_id] = persisted_memory
+    elif request.project_id in store.memories:
+        store.memories[request.project_id].content_rules.append(rule)
     events.audit(user, "style.analyzed", "project_memory", request.project_id, {"energy": style["energy"]})
     return style
+
+
+@router.get("/scripts")
+def scripts(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    return repository.list_scripts(db, user)
+
+
+@router.post("/scripts")
+def create_script(request: ScriptRequest, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    persisted = repository.create_script(db, user, request.model_dump(mode="python"))
+    if persisted:
+        events.activity(user, "created script", "script", persisted.id)
+        events.audit(user, "script.created", "script", persisted.id, {"status": persisted.status})
+        return persisted
+    raise HTTPException(status_code=404, detail="Project not found")
+
+
+@router.patch("/scripts/{script_id}")
+def update_script(script_id: str, payload: dict, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    persisted = repository.update_script(db, user, script_id, payload)
+    if not persisted:
+        raise HTTPException(status_code=404, detail="Script not found")
+    events.audit(user, "script.updated", "script", script_id, {"status": persisted.status})
+    return persisted
+
+
+@router.get("/calendar")
+def calendar(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    return repository.list_calendar_items(db, user)
+
+
+@router.post("/calendar")
+def create_calendar_item(request: CalendarItemRequest, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    persisted = repository.create_calendar_item(db, user, request.model_dump(mode="python"))
+    if persisted:
+        events.activity(user, "created calendar item", "calendar_item", persisted.id)
+        events.audit(user, "calendar_item.created", "calendar_item", persisted.id, {"status": persisted.status})
+        return persisted
+    raise HTTPException(status_code=404, detail="Project not found")
+
+
+@router.patch("/calendar/{item_id}")
+def update_calendar_item(item_id: str, payload: dict, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    persisted = repository.update_calendar_item(db, user, item_id, payload)
+    if not persisted:
+        raise HTTPException(status_code=404, detail="Calendar item not found")
+    events.audit(user, "calendar_item.updated", "calendar_item", item_id, {"status": persisted.status})
+    return persisted
 
 
 @router.post("/exports/markdown")
@@ -301,8 +399,8 @@ def admin_subscriptions(user: CurrentUser = Depends(get_admin_user)):
 
 
 @admin_router.get("/generations")
-def admin_generations(user: CurrentUser = Depends(get_admin_user)):
-    return list(store.generations.values())
+def admin_generations(user: CurrentUser = Depends(get_admin_user), db: Session = Depends(get_db)):
+    return repository.list_generations(db, user) + list(store.generations.values())
 
 
 @admin_router.get("/agent-runs")
@@ -316,8 +414,8 @@ def admin_errors(user: CurrentUser = Depends(get_admin_user)):
 
 
 @admin_router.get("/feedback")
-def admin_feedback(user: CurrentUser = Depends(get_admin_user)):
-    return store.feedback
+def admin_feedback(user: CurrentUser = Depends(get_admin_user), db: Session = Depends(get_db)):
+    return repository.list_feedback(db) + store.feedback
 
 
 @admin_router.get("/usage")
@@ -328,7 +426,7 @@ def admin_usage(user: CurrentUser = Depends(get_admin_user), db: Session = Depen
 @admin_router.get("/audit-logs")
 def admin_audit_logs(user: CurrentUser = Depends(get_admin_user), db: Session = Depends(get_db)):
     persisted = repository.admin_audit_logs(db)
-    return persisted or store.audit_logs
+    return persisted + store.audit_logs
 
 
 @admin_router.get("/background-jobs")

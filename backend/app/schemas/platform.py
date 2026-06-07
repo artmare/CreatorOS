@@ -90,6 +90,34 @@ class Generation(BaseModel):
     created_at: datetime
 
 
+class Script(BaseModel):
+    id: str
+    workspace_id: str
+    project_id: str
+    idea_id: str | None = None
+    generation_id: str | None = None
+    title: str
+    body: str
+    status: str
+    growth_score: dict[str, Any] = Field(default_factory=dict)
+    export_state: str | None = None
+    created_at: datetime
+
+
+class CalendarItem(BaseModel):
+    id: str
+    workspace_id: str
+    project_id: str
+    idea_id: str | None = None
+    script_id: str | None = None
+    title: str
+    platform: str
+    scheduled_for: datetime | None = None
+    status: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+
 class AgentRun(BaseModel):
     id: str
     workspace_id: str
@@ -159,6 +187,27 @@ class FeedbackRequest(BaseModel):
 class StyleAnalyzeRequest(BaseModel):
     project_id: str = "project_youtube"
     text: str
+
+
+class ScriptRequest(BaseModel):
+    project_id: str = "project_youtube"
+    title: str
+    body: str
+    status: str = "draft"
+    idea_id: str | None = None
+    generation_id: str | None = None
+    growth_score: dict[str, Any] = Field(default_factory=dict)
+
+
+class CalendarItemRequest(BaseModel):
+    project_id: str = "project_youtube"
+    title: str
+    platform: str = "YouTube"
+    scheduled_for: datetime | None = None
+    status: str = "idea"
+    idea_id: str | None = None
+    script_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class Notification(BaseModel):
