@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.auth import CurrentUser
 from app.db.models import (
@@ -626,8 +627,10 @@ class PlatformRepository:
                 "created_at": _now().isoformat(),
             }
 
-        content_pack.payload = payload
-        generation.result = payload
+        content_pack.payload = dict(payload)
+        generation.result = dict(payload)
+        flag_modified(content_pack, "payload")
+        flag_modified(generation, "result")
         db.add(
             UsageLedgerORM(
                 workspace_id=project.workspace_id,

@@ -3,7 +3,7 @@ services:
     name: creatoros-api
     runtime: python
     plan: standard
-    buildCommand: pip install -r backend/requirements.txt
+    buildCommand: pip install --upgrade pip && pip install -r backend/requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --app-dir backend
     healthCheckPath: /health
     envVars:
@@ -15,19 +15,43 @@ services:
         sync: false
       - key: SUPABASE_URL
         sync: false
+      - key: SUPABASE_JWT_AUDIENCE
+        value: authenticated
       - key: SUPABASE_JWT_SECRET
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
       - key: OPENAI_API_KEY
         sync: false
+      - key: OPENAI_MODEL
+        value: gpt-5-mini
+      - key: OPENAI_TIMEOUT_SECONDS
+        value: "45"
+      - key: OPENAI_MAX_RETRIES
+        value: "2"
       - key: REDIS_URL
         sync: false
       - key: TELEGRAM_BOT_TOKEN
         sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
       - key: YOUTUBE_API_KEY
         sync: false
+      - key: YOUTUBE_OAUTH_CLIENT_ID
+        sync: false
+      - key: YOUTUBE_OAUTH_CLIENT_SECRET
+        sync: false
       - key: LEMONSQUEEZY_API_KEY
+        sync: false
+      - key: LEMONSQUEEZY_STORE_ID
+        sync: false
+      - key: LEMONSQUEEZY_WEBHOOK_SECRET
+        sync: false
+      - key: LEMONSQUEEZY_STARTER_VARIANT_ID
+        sync: false
+      - key: LEMONSQUEEZY_PRO_VARIANT_ID
+        sync: false
+      - key: LEMONSQUEEZY_AGENCY_VARIANT_ID
         sync: false
       - key: ADMIN_EMAIL_ALLOWLIST
         sync: false
@@ -36,8 +60,8 @@ services:
     name: creatoros-worker
     runtime: python
     plan: standard
-    buildCommand: pip install -r backend/requirements.txt
-    startCommand: celery -A app.workers.celery_app.celery_app worker --loglevel=info --workdir backend
+    buildCommand: pip install --upgrade pip && pip install -r backend/requirements.txt
+    startCommand: celery --workdir backend -A app.workers.celery_app.celery_app worker --loglevel=info
     envVars:
       - key: APP_ENV
         value: production
@@ -47,7 +71,29 @@ services:
         sync: false
       - key: SUPABASE_URL
         sync: false
+      - key: SUPABASE_JWT_AUDIENCE
+        value: authenticated
+      - key: SUPABASE_JWT_SECRET
+        sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
       - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-5-mini
+      - key: OPENAI_TIMEOUT_SECONDS
+        value: "45"
+      - key: OPENAI_MAX_RETRIES
+        value: "2"
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      - key: YOUTUBE_API_KEY
+        sync: false
+      - key: LEMONSQUEEZY_API_KEY
+        sync: false
+      - key: LEMONSQUEEZY_STORE_ID
+        sync: false
+      - key: LEMONSQUEEZY_WEBHOOK_SECRET
         sync: false

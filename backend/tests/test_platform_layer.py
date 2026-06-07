@@ -153,7 +153,9 @@ def test_content_pack_persists_generation_script_calendar_and_feedback():
     assert pack["calendar_item"]["status"] == "script_ready"
 
     packs = client.get("/api/v1/content-factory/packs")
-    assert any(item["id"] == pack["id"] for item in packs.json())
+    persisted_pack = next(item for item in packs.json() if item["id"] == pack["id"])
+    assert persisted_pack["generation_id"] == pack["generation_id"]
+    assert persisted_pack["script_id"] == pack["script_id"]
 
     scripts = client.get("/api/v1/scripts")
     assert any(item["id"] == pack["script_id"] for item in scripts.json())

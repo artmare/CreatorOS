@@ -129,8 +129,6 @@ def idea_vault(user: CurrentUser = Depends(get_current_user), db: Session = Depe
 def create_idea(payload: dict, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     persisted = repository.create_idea(db, user, payload)
     if persisted:
-        events.activity(user, "created idea", "idea", persisted.id)
-        events.audit(user, "idea.created", "idea", persisted.id, {"status": persisted.status.value})
         return persisted
     idea = store.add_idea(
         title=payload.get("title", "Untitled idea"),
@@ -167,9 +165,6 @@ def content_factory(request: ContentPackRequest, user: CurrentUser = Depends(get
     pack = generate_content_pack(request)
     persisted = repository.record_content_pack(db, user, pack, request)
     if persisted:
-        events.activity(user, "created content pack", "content_pack", persisted["id"])
-        events.notify(user, "Content pack ready", f"The pack for '{request.topic}' is ready.", "generation_completed")
-        events.audit(user, "content_pack.generated", "content_pack", persisted["id"], {"topic": request.topic})
         return persisted
     events.audit(user, "content_pack.generated", "content_pack", pack.id, {"topic": request.topic})
     return pack
@@ -210,9 +205,6 @@ def agent_runs(user: CurrentUser = Depends(get_current_user), db: Session = Depe
 def generation_feedback(generation_id: str, request: FeedbackRequest, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     persisted = repository.record_feedback(db, user, generation_id, request.action.value, request.note)
     if persisted:
-        if request.action == "use_in_calendar":
-            events.notify(user, "Added to calendar", "The generation was marked for the content calendar.", "calendar")
-        events.audit(user, "generation.feedback", "generation", generation_id, {"action": request.action.value})
         return persisted
     record = {"generation_id": generation_id, "action": request.action, "note": request.note, "user_id": user.id}
     store.feedback.append(record)
@@ -227,13 +219,13 @@ def generation_feedback(generation_id: str, request: FeedbackRequest, user: Curr
 @router.get("/activity")
 def activity(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     persisted = repository.list_activity(db, user)
-    return persisted + store.activity
+    return persisted or store.activity
 
 
 @router.get("/notifications")
 def notifications(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     persisted = repository.list_notifications(db, user)
-    return persisted + store.notifications
+    return persisted or store.notifications
 
 
 @router.patch("/notifications/{notification_id}/read")
@@ -293,8 +285,6 @@ def scripts(user: CurrentUser = Depends(get_current_user), db: Session = Depends
 def create_script(request: ScriptRequest, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     persisted = repository.create_script(db, user, request.model_dump(mode="python"))
     if persisted:
-        events.activity(user, "created script", "script", persisted.id)
-        events.audit(user, "script.created", "script", persisted.id, {"status": persisted.status})
         return persisted
     raise HTTPException(status_code=404, detail="Project not found")
 
@@ -304,7 +294,6 @@ def update_script(script_id: str, payload: dict, user: CurrentUser = Depends(get
     persisted = repository.update_script(db, user, script_id, payload)
     if not persisted:
         raise HTTPException(status_code=404, detail="Script not found")
-    events.audit(user, "script.updated", "script", script_id, {"status": persisted.status})
     return persisted
 
 
@@ -317,8 +306,6 @@ def calendar(user: CurrentUser = Depends(get_current_user), db: Session = Depend
 def create_calendar_item(request: CalendarItemRequest, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     persisted = repository.create_calendar_item(db, user, request.model_dump(mode="python"))
     if persisted:
-        events.activity(user, "created calendar item", "calendar_item", persisted.id)
-        events.audit(user, "calendar_item.created", "calendar_item", persisted.id, {"status": persisted.status})
         return persisted
     raise HTTPException(status_code=404, detail="Project not found")
 
@@ -328,7 +315,6 @@ def update_calendar_item(item_id: str, payload: dict, user: CurrentUser = Depend
     persisted = repository.update_calendar_item(db, user, item_id, payload)
     if not persisted:
         raise HTTPException(status_code=404, detail="Calendar item not found")
-    events.audit(user, "calendar_item.updated", "calendar_item", item_id, {"status": persisted.status})
     return persisted
 
 
@@ -426,7 +412,7 @@ def admin_usage(user: CurrentUser = Depends(get_admin_user), db: Session = Depen
 @admin_router.get("/audit-logs")
 def admin_audit_logs(user: CurrentUser = Depends(get_admin_user), db: Session = Depends(get_db)):
     persisted = repository.admin_audit_logs(db)
-    return persisted + store.audit_logs
+    return persisted or store.audit_logs
 
 
 @admin_router.get("/background-jobs")
