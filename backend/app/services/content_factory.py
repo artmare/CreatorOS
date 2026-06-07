@@ -61,4 +61,5 @@ def generate_content_pack(request: ContentPackRequest) -> ContentPack:
         created_at=datetime.now(timezone.utc),
     )
     store.add_notification("Content Pack готов", f"Пак по теме «{request.topic}» создан.", "generation_completed")
+    store.content_packs[pack.id] = pack
     return pack

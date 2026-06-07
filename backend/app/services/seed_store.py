@@ -67,11 +67,14 @@ class SeedStore:
         }
         self.knowledge_sources: dict[str, KnowledgeSource] = {}
         self.ideas: dict[str, Idea] = {}
+        self.content_packs: dict[str, Any] = {}
         self.generations: dict[str, Generation] = {}
         self.agent_runs: dict[str, AgentRun] = {}
         self.feedback: list[dict[str, Any]] = []
+        self.usage_ledger: list[dict[str, Any]] = []
         self.notifications: list[Notification] = []
         self.activity: list[ActivityEvent] = []
+        self.background_jobs: list[dict[str, Any]] = []
         self.audit_logs: list[dict[str, Any]] = []
         self.errors: list[dict[str, Any]] = []
 
@@ -131,15 +134,18 @@ class SeedStore:
 
     def usage_summary(self) -> UsageSummary:
         workspace = self.workspaces["ws_creatoros_demo"]
-        estimated_cost = sum(g.cost_estimate for g in self.generations.values())
+        usage_count = len(self.generations) + len(self.usage_ledger)
+        estimated_cost = sum(g.cost_estimate for g in self.generations.values()) + sum(
+            item["cost_estimate"] for item in self.usage_ledger
+        )
         return UsageSummary(
             workspace_id=workspace.id,
             plan=workspace.plan,
             month=now().strftime("%Y-%m"),
-            generations_used=len(self.generations),
+            generations_used=usage_count,
             generation_limit=workspace.monthly_limit,
             estimated_cost=round(estimated_cost, 4),
-            blocked=len(self.generations) >= workspace.monthly_limit,
+            blocked=usage_count >= workspace.monthly_limit,
         )
 
 

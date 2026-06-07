@@ -11,13 +11,18 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./creatoros.db"
 
     supabase_url: str | None = None
+    supabase_jwt_audience: str = "authenticated"
     supabase_jwt_secret: str | None = None
     supabase_service_role_key: str | None = None
 
     openai_api_key: str | None = None
     openai_model: str = "gpt-5-mini"
+    openai_timeout_seconds: float = 45.0
+    openai_max_retries: int = 2
 
     redis_url: str = "redis://localhost:6379/0"
+
+    admin_email_allowlist: str = ""
 
     telegram_bot_token: str | None = None
     telegram_webhook_secret: str | None = None

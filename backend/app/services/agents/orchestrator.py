@@ -7,7 +7,7 @@ from app.services.agents.openai_adapter import OpenAIAdapter
 from app.services.agents.prompts import AGENT_PROMPTS
 from app.services.quality import memory_context, validate_output
 from app.services.seed_store import store
-from app.services.usage import assert_usage_available, estimate_cost, estimate_tokens
+from app.services.usage import assert_usage_available, estimate_cost, estimate_tokens, record_usage
 
 
 class ProducerOrchestrator:
@@ -59,6 +59,7 @@ class ProducerOrchestrator:
             created_at=datetime.now(timezone.utc),
         )
         store.agent_runs[run.id] = run
+        record_usage(run.workspace_id, "system", f"agent:{agent_name}", model, tokens, cost)
         store.add_activity("запустил агента", "agent_run", run.id)
         return run
 

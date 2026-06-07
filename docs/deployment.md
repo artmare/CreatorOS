@@ -23,7 +23,9 @@
 
 ## Backend on Render
 
-Create a Web Service:
+Use the included `render.yaml` blueprint for the API and worker, or create services manually.
+
+Create a Web Service manually:
 
 ```bash
 pip install -r backend/requirements.txt
@@ -36,6 +38,7 @@ Set env vars:
 - `FRONTEND_ORIGIN=https://your-vercel-domain`
 - `DATABASE_URL`
 - `SUPABASE_URL`
+- `SUPABASE_JWT_AUDIENCE=authenticated`
 - `SUPABASE_JWT_SECRET`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `OPENAI_API_KEY`
@@ -66,9 +69,10 @@ Use the same backend env vars, especially `REDIS_URL`.
 
 1. Create a Supabase project.
 2. Run `supabase/migrations/0001_creatoros_platform.sql`.
-3. Keep RLS enabled for all exposed tables.
-4. Add policies matching workspace membership before exposing tables directly to the browser.
-5. Use publishable keys in the frontend and secret/service-role keys only on the backend.
+3. Run `supabase/migrations/0002_creatoros_scale_policies.sql`.
+4. Keep RLS enabled for all exposed tables.
+5. Grant Data API access only to the roles and tables you intend to expose.
+6. Use publishable keys in the frontend and secret/service-role keys only on the backend.
 
 Supabase docs used for the implementation recommend SSR clients with cookies and `@supabase/ssr`, and stress that Data API grants and RLS policies must be configured together.
 
