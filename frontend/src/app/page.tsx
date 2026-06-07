@@ -28,33 +28,35 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import type { LucideIcon } from "lucide-react";
-import { useMemo, useState, useSyncExternalStore } from "react";
-import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { useMemo, useState } from "react";
 
-type View = "dashboard" | "factory" | "memory" | "admin";
+type View =
+  | "dashboard"
+  | "producer"
+  | "scripts"
+  | "ideas"
+  | "calendar"
+  | "radar"
+  | "score"
+  | "repurpose"
+  | "memory"
+  | "analytics"
+  | "settings"
+  | "factory"
+  | "admin";
 
-const navItems = [
-  ["Dashboard", LayoutDashboard],
-  ["AI Producer", Bot],
-  ["Scripts", FileText],
-  ["Ideas", Sparkles],
-  ["Content Calendar", CalendarDays],
-  ["Competitor Radar", Search],
-  ["Growth Score", Gauge],
-  ["Repurpose", RefreshCcw],
-  ["My Style", MessageSquare],
-  ["Analytics", BarChart3],
-  ["Settings", Settings],
+const navItems: Array<[string, LucideIcon, View]> = [
+  ["Dashboard", LayoutDashboard, "dashboard"],
+  ["AI Producer", Bot, "producer"],
+  ["Scripts", FileText, "scripts"],
+  ["Ideas", Sparkles, "ideas"],
+  ["Content Calendar", CalendarDays, "calendar"],
+  ["Competitor Radar", Search, "radar"],
+  ["Growth Score", Gauge, "score"],
+  ["Repurpose", RefreshCcw, "repurpose"],
+  ["My Style", MessageSquare, "memory"],
+  ["Analytics", BarChart3, "analytics"],
+  ["Settings", Settings, "settings"],
 ] as const;
 
 const growthData = [
@@ -105,6 +107,72 @@ const platformItems: Array<[LucideIcon, string, string]> = [
   [ChevronRight, "Exports", "Copy and Markdown now"],
 ];
 
+const featureViews: Partial<Record<View, { icon: LucideIcon; title: string; description: string; metrics: string[]; actions: string[] }>> = {
+  producer: {
+    icon: Bot,
+    title: "Producer Orchestrator",
+    description: "Routes intent to Strategist, Scriptwriter, Hook Doctor, Competitor Analyst, Growth Coach, and Repurposer.",
+    metrics: ["6 specialist agents", "memory injected", "run history stored", "quality checked"],
+    actions: ["Produce response", "View agent runs", "Open feedback"],
+  },
+  scripts: {
+    icon: FileText,
+    title: "Script Studio",
+    description: "Draft, validate, score, export, and move long-form scripts into the calendar.",
+    metrics: ["12 ready scripts", "4 approved", "Markdown export", "style save"],
+    actions: ["Draft script", "Copy markdown", "Send to calendar"],
+  },
+  ideas: {
+    icon: Sparkles,
+    title: "Idea Vault",
+    description: "Manage idea statuses from draft to published with feedback and audit history.",
+    metrics: ["draft", "promising", "approved", "in_script"],
+    actions: ["Approve idea", "Reject idea", "Create content pack"],
+  },
+  calendar: {
+    icon: CalendarDays,
+    title: "Content Calendar",
+    description: "Schedule content packs, scripts, Shorts, Telegram posts, reminders, and later CSV export.",
+    metrics: ["3 scheduled", "1 script ready", "notifications on", "CSV later"],
+    actions: ["Add calendar item", "Queue reminder", "Export later"],
+  },
+  radar: {
+    icon: Search,
+    title: "Competitor Radar",
+    description: "Pull competitor topics through YouTube Data API adapters and hand findings to the strategist.",
+    metrics: ["YouTube adapter", "topic gaps", "manual fallback", "claim warnings"],
+    actions: ["Analyze channel", "Save gap", "Send to strategist"],
+  },
+  score: {
+    icon: Gauge,
+    title: "Growth Score",
+    description: "Score hook, title, retention, emotion, virality, clarity, and improvement actions.",
+    metrics: ["hook", "title", "retention", "clarity"],
+    actions: ["Score script", "Improve hook", "Regenerate"],
+  },
+  repurpose: {
+    icon: RefreshCcw,
+    title: "Repurpose Studio",
+    description: "Turn one topic or script into five Shorts, Telegram post, and reusable pack assets.",
+    metrics: ["5 Shorts", "Telegram post", "pack export", "feedback loop"],
+    actions: ["Create Shorts", "Create Telegram post", "Save to style"],
+  },
+  analytics: {
+    icon: BarChart3,
+    title: "Analytics",
+    description: "Track usage, cost, generation volume, feedback, activity, and admin-facing platform health.",
+    metrics: ["34 generations", "$0.84 estimated", "12 feedback", "0 errors"],
+    actions: ["Open usage", "Open feedback", "Open audit"],
+  },
+  settings: {
+    icon: Settings,
+    title: "Settings",
+    description: "Configure workspace, project memory, integrations, plan limits, and provider secrets.",
+    metrics: ["Supabase ready", "OpenAI backend-only", "Lemon Squeezy", "Telegram"],
+    actions: ["Edit memory", "Connect provider", "Review limits"],
+  },
+};
+
 function MetricCard({
   label,
   value,
@@ -135,22 +203,75 @@ function StatusPill({ children, kind = "neutral" }: { children: string; kind?: "
   return <span className={`rounded-md border px-2 py-1 text-xs font-medium ${color}`}>{children}</span>;
 }
 
+function GrowthAreaChart() {
+  const maxScore = Math.max(...growthData.map((item) => item.score));
+  const points = growthData
+    .map((item, index) => {
+      const x = 20 + index * 52;
+      const y = 176 - (item.score / maxScore) * 138;
+      return `${x},${y}`;
+    })
+    .join(" ");
+
+  return (
+    <div className="h-64 rounded-md border border-[#252b38] bg-[#0d1017] p-3">
+      <svg viewBox="0 0 360 210" role="img" aria-label="Growth score chart" className="h-full w-full">
+        <path d="M20 184H340" stroke="#202637" />
+        <path d="M20 138H340" stroke="#202637" />
+        <path d="M20 92H340" stroke="#202637" />
+        <polyline points={`20,184 ${points} 332,184`} fill="#182251" opacity="0.7" />
+        <polyline points={points} fill="none" stroke="#7c8cff" strokeWidth="3" />
+        {growthData.map((item, index) => (
+          <g key={item.name}>
+            <circle cx={20 + index * 52} cy={176 - (item.score / maxScore) * 138} r="4" fill="#20d6a5" />
+            <text x={20 + index * 52} y="202" textAnchor="middle" fill="#8e96a8" fontSize="11">
+              {item.name}
+            </text>
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+function CostBarChart() {
+  const maxCost = Math.max(...growthData.map((item) => item.cost));
+  return (
+    <div className="flex h-40 items-end gap-2 rounded-md border border-[#252b38] bg-[#0d1017] p-3">
+      {growthData.map((item) => (
+        <div key={item.name} className="flex min-w-0 flex-1 flex-col items-center gap-2">
+          <div
+            className="w-full rounded-t bg-[#20d6a5]"
+            style={{ height: `${Math.max(16, (item.cost / maxCost) * 112)}px` }}
+            title={`$${item.cost}`}
+          />
+          <span className="text-[10px] text-[#8e96a8]">{item.name}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function Home() {
   const [view, setView] = useState<View>("dashboard");
   const [topic, setTopic] = useState("дисциплина после провала");
   const [packGenerated, setPackGenerated] = useState(false);
-  const mounted = useSyncExternalStore(
-    () => () => undefined,
-    () => true,
-    () => false,
-  );
 
   const pageTitle = useMemo(
     () =>
       ({
         dashboard: "Dashboard",
+        producer: "AI Producer",
+        scripts: "Scripts",
+        ideas: "Ideas",
+        calendar: "Content Calendar",
+        radar: "Competitor Radar",
+        score: "Growth Score",
+        repurpose: "Repurpose",
         factory: "Content Factory",
         memory: "Project Memory",
+        analytics: "Analytics",
+        settings: "Settings",
         admin: "Admin",
       })[view],
     [view],
@@ -171,15 +292,15 @@ export default function Home() {
           </div>
 
           <nav className="mt-8 grid gap-1">
-            {navItems.map(([label, Icon], index) => (
+            {navItems.map(([label, Icon, targetView]) => (
               <button
                 key={label}
                 className={`flex h-9 items-center gap-3 rounded-md px-3 text-left text-sm transition ${
-                  index === 0 && view === "dashboard"
+                  targetView === view
                     ? "bg-[#151925] text-white"
                     : "text-[#9aa3b2] hover:bg-[#111722] hover:text-white"
                 }`}
-                onClick={() => setView(index === 0 ? "dashboard" : label === "My Style" ? "memory" : "dashboard")}
+                onClick={() => setView(targetView)}
               >
                 <Icon className="h-4 w-4" />
                 {label}
@@ -216,7 +337,10 @@ export default function Home() {
                 <Sparkles className="h-4 w-4" />
                 Создать идею
               </button>
-              <button className="inline-flex h-10 items-center gap-2 rounded-md border border-[#2b3142] px-4 text-sm text-[#dbe2f0]">
+              <button
+                onClick={() => setView("scripts")}
+                className="inline-flex h-10 items-center gap-2 rounded-md border border-[#2b3142] px-4 text-sm text-[#dbe2f0]"
+              >
                 <FileText className="h-4 w-4" />
                 Написать сценарий
               </button>
@@ -253,33 +377,7 @@ export default function Home() {
                     <h3 className="font-semibold">Growth and cost telemetry</h3>
                     <StatusPill>agent runs tracked</StatusPill>
                   </div>
-                  <div className="h-64 min-h-64 min-w-0">
-                    {mounted ? (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={growthData}>
-                          <defs>
-                            <linearGradient id="score" x1="0" x2="0" y1="0" y2="1">
-                              <stop offset="5%" stopColor="#7c8cff" stopOpacity={0.5} />
-                              <stop offset="95%" stopColor="#7c8cff" stopOpacity={0} />
-                            </linearGradient>
-                          </defs>
-                          <CartesianGrid stroke="#202637" vertical={false} />
-                          <XAxis dataKey="name" stroke="#697184" fontSize={12} />
-                          <YAxis stroke="#697184" fontSize={12} />
-                          <Tooltip contentStyle={{ background: "#111722", border: "1px solid #252b38" }} />
-                          <Area
-                            type="monotone"
-                            dataKey="score"
-                            stroke="#7c8cff"
-                            fill="url(#score)"
-                            isAnimationActive={false}
-                          />
-                        </AreaChart>
-                      </ResponsiveContainer>
-                    ) : (
-                      <div className="h-full rounded-md bg-[#0d1017]" />
-                    )}
-                  </div>
+                  <GrowthAreaChart />
                 </div>
 
                 <div className="rounded-lg border border-[#252b38] bg-[#10131a] p-4">
@@ -318,8 +416,11 @@ export default function Home() {
                   One topic becomes an idea, YouTube script, five titles, five Shorts, Telegram post, Growth Score,
                   feedback actions, and optional calendar item.
                 </p>
-                <label className="mt-5 block text-sm text-[#c8d0df]">Topic</label>
+                <label htmlFor="content-topic" className="mt-5 block text-sm text-[#c8d0df]">
+                  Topic
+                </label>
                 <textarea
+                  id="content-topic"
                   value={topic}
                   onChange={(event) => setTopic(event.target.value)}
                   className="mt-2 min-h-28 w-full rounded-md border border-[#2b3142] bg-[#0d1017] p-3 text-sm outline-none focus:border-[#7c8cff]"
@@ -399,6 +500,53 @@ export default function Home() {
             </motion.div>
           )}
 
+          {featureViews[view] && (
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mt-6 grid gap-4 xl:grid-cols-[1fr_0.85fr]">
+              <div className="rounded-lg border border-[#252b38] bg-[#10131a] p-5">
+                {(() => {
+                  const feature = featureViews[view]!;
+                  const Icon = feature.icon;
+                  return (
+                    <>
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#151925] text-[#7c8cff]">
+                          <Icon className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <h2 className="text-lg font-semibold">{feature.title}</h2>
+                          <div className="text-sm text-[#8e96a8]">Workspace-scoped production module</div>
+                        </div>
+                      </div>
+                      <p className="mt-4 max-w-2xl text-sm leading-6 text-[#9aa3b2]">{feature.description}</p>
+                      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                        {feature.metrics.map((metric) => (
+                          <div key={metric} className="rounded-md border border-[#252b38] bg-[#0d1017] p-3 text-sm text-[#e8edf7]">
+                            {metric}
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+              <div className="rounded-lg border border-[#252b38] bg-[#10131a] p-5">
+                <h2 className="text-lg font-semibold">Actions</h2>
+                <div className="mt-4 grid gap-3">
+                  {featureViews[view]!.actions.map((action) => (
+                    <button key={action} className="flex items-center justify-between rounded-md border border-[#2b3142] bg-[#0d1017] px-3 py-3 text-sm text-[#dbe2f0]">
+                      {action}
+                      <ChevronRight className="h-4 w-4 text-[#7c8cff]" />
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-5 rounded-md border border-[#252b38] bg-[#0d1017] p-3 text-xs leading-5 text-[#9aa3b2]">
+                  API contract exists in FastAPI under /api/v1 and persists to the workspace-scoped platform layer when
+                  Supabase/Postgres secrets are configured.
+                </div>
+              </div>
+            </motion.div>
+          )}
+
           {view === "admin" && (
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mt-6 grid gap-4 xl:grid-cols-[1fr_0.8fr]">
               <div className="rounded-lg border border-[#252b38] bg-[#10131a] p-5">
@@ -465,19 +613,7 @@ export default function Home() {
               <Wallet className="h-4 w-4 text-[#ffd166]" />
               Usage and Cost Control
             </div>
-            <div className="mt-4 h-40 min-h-40 min-w-0">
-              {mounted ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={growthData}>
-                    <XAxis dataKey="name" stroke="#697184" fontSize={10} />
-                    <YAxis stroke="#697184" fontSize={10} />
-                    <Bar dataKey="cost" fill="#20d6a5" radius={[4, 4, 0, 0]} isAnimationActive={false} />
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="h-full rounded-md bg-[#0d1017]" />
-              )}
-            </div>
+            <CostBarChart />
           </div>
 
           <div className="mt-5 grid gap-3">
