@@ -100,6 +100,7 @@ class AgentRun(BaseModel):
     memory_used: ProjectMemory
     model: str
     result: dict[str, Any]
+    token_estimate: int = 0
     cost_estimate: float
     validation_status: str
     status: str

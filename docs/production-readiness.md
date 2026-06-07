@@ -6,6 +6,7 @@ CreatorOS now has the platform contracts required for a real B2B SaaS deployment
 - Supabase Auth boundary with JWT validation when `SUPABASE_JWT_SECRET` is configured.
 - Row Level Security policies and indexes for workspace membership and high-volume listing paths.
 - Usage ledger and cost estimation for every agent run.
+- Persistent workspace/project/memory/knowledge/job routes backed by SQLAlchemy and Supabase Postgres migrations.
 - Idempotent background job API for long-running generations, integrations, exports, and reminders.
 - Admin API protected by role checks.
 - Render blueprint for API and worker services.

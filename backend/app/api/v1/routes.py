@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
 from app.core.auth import CurrentUser, get_admin_user, get_current_user
+from app.db.session import get_db
 from app.schemas.platform import (
     AgentGenerateRequest,
     ContentPackRequest,
@@ -17,34 +19,91 @@ from app.services.integrations.billing import create_checkout, handle_webhook
 from app.services.integrations.telegram import handle_telegram_update
 from app.services.integrations.youtube import competitor_summary, own_channel_summary
 from app.services.jobs import jobs
+from app.services.persistence import repository
 from app.services.quality import validate_output
 from app.services.seed_store import store
 
 router = APIRouter(prefix="/api/v1")
 
 
+def ensure_agent_memory(project_id: str, db: Session) -> None:
+    if project_id in store.memories:
+        return
+    memory = repository.get_memory(db, project_id)
+    if memory:
+        store.memories[project_id] = memory
+
+
 @router.get("/workspaces")
-def workspaces(user: CurrentUser = Depends(get_current_user)):
-    return list(store.workspaces.values())
+def workspaces(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    return repository.list_workspaces(db, user)
+
+
+@router.post("/workspaces")
+def create_workspace(payload: dict, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    workspace = repository.create_workspace(db, user, payload)
+    events.audit(user, "workspace.created", "workspace", workspace.id, {"name": workspace.name})
+    return workspace
 
 
 @router.get("/projects")
-def projects(user: CurrentUser = Depends(get_current_user)):
-    return list(store.projects.values())
+def projects(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    return repository.list_projects(db, user)
+
+
+@router.post("/projects")
+def create_project(payload: dict, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    project = repository.create_project(db, user, payload)
+    events.audit(user, "project.created", "project", project.id, {"workspace_id": project.workspace_id})
+    return project
 
 
 @router.get("/project-memory")
-def project_memory(project_id: str = "project_youtube", user: CurrentUser = Depends(get_current_user)):
+def project_memory(project_id: str = "project_youtube", user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    memory = repository.get_memory(db, project_id)
+    if memory:
+        return memory
     return store.memories[project_id]
 
 
+@router.patch("/project-memory")
+def update_project_memory(payload: dict, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    project_id = payload.get("project_id", "project_youtube")
+    memory = repository.upsert_memory(db, project_id, payload)
+    if memory:
+        events.audit(user, "project_memory.updated", "project_memory", project_id)
+        return memory
+    if project_id in store.memories:
+        for key in [
+            "niche",
+            "audience",
+            "tone",
+            "content_rules",
+            "preferred_formats",
+            "rejected_ideas",
+            "best_performing_topics",
+            "past_successful_scripts",
+        ]:
+            if key in payload:
+                setattr(store.memories[project_id], key, payload[key])
+        events.audit(user, "project_memory.updated", "project_memory", project_id)
+        return store.memories[project_id]
+    raise HTTPException(status_code=404, detail="Project memory not found")
+
+
 @router.get("/knowledge-base")
-def knowledge_base(user: CurrentUser = Depends(get_current_user)):
-    return list(store.knowledge_sources.values())
+def knowledge_base(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    persisted = repository.list_knowledge(db, user)
+    return persisted or list(store.knowledge_sources.values())
 
 
 @router.post("/knowledge-base")
-def add_knowledge(source: dict, user: CurrentUser = Depends(get_current_user)):
+def add_knowledge(source: dict, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    persisted = repository.add_knowledge(db, user, source)
+    if persisted:
+        events.activity(user, "added knowledge source", "knowledge_source", persisted.id)
+        events.audit(user, "knowledge_source.created", "knowledge_source", persisted.id, {"project_id": persisted.project_id})
+        return persisted
     source["id"] = store.new_id("kb")
     source["created_at"] = source.get("created_at") or store.ideas[next(iter(store.ideas))].created_at
     store.knowledge_sources[source["id"]] = source
@@ -54,45 +113,59 @@ def add_knowledge(source: dict, user: CurrentUser = Depends(get_current_user)):
 
 
 @router.get("/idea-vault")
-def idea_vault(user: CurrentUser = Depends(get_current_user)):
-    return list(store.ideas.values())
+def idea_vault(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    persisted = repository.list_ideas(db, user)
+    return persisted or list(store.ideas.values())
 
 
 @router.patch("/idea-vault/{idea_id}/status")
-def update_idea_status(idea_id: str, payload: dict, user: CurrentUser = Depends(get_current_user)):
+def update_idea_status(idea_id: str, payload: dict, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    new_status = IdeaStatus(payload["status"])
+    persisted = repository.update_idea_status(db, idea_id, new_status)
+    if persisted:
+        events.activity(user, "updated idea status", "idea", idea_id)
+        events.audit(user, "idea.status_updated", "idea", idea_id, {"status": persisted.status.value})
+        return persisted
     idea = store.ideas.get(idea_id)
     if not idea:
         raise HTTPException(status_code=404, detail="Idea not found")
-    idea.status = IdeaStatus(payload["status"])
+    idea.status = new_status
     events.activity(user, "updated idea status", "idea", idea_id)
     events.audit(user, "idea.status_updated", "idea", idea_id, {"status": idea.status.value})
     return idea
 
 
 @router.post("/content-factory/generate-pack")
-def content_factory(request: ContentPackRequest, user: CurrentUser = Depends(get_current_user)):
+def content_factory(request: ContentPackRequest, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    ensure_agent_memory(request.project_id, db)
     pack = generate_content_pack(request)
     events.audit(user, "content_pack.generated", "content_pack", pack.id, {"topic": request.topic})
     return pack
 
 
 @router.post("/orchestrator/produce")
-def produce(request: OrchestratorRequest, user: CurrentUser = Depends(get_current_user)):
+def produce(request: OrchestratorRequest, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    ensure_agent_memory(request.project_id, db)
     result = orchestrator.produce(request.project_id, request.message)
+    for run in result["runs"]:
+        repository.record_agent_run(db, user, run)
     events.audit(user, "orchestrator.produced", "agent_run", None, {"agents": result["agents"]})
     return result
 
 
 @router.post("/agents/{agent_name}/generate")
-def generate_agent(agent_name: str, request: AgentGenerateRequest, user: CurrentUser = Depends(get_current_user)):
+def generate_agent(agent_name: str, request: AgentGenerateRequest, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    ensure_agent_memory(request.project_id, db)
     run = orchestrator.run_agent(agent_name, request.project_id, request.prompt, request.intent)
+    repository.record_agent_run(db, user, run)
     events.audit(user, "agent.generated", "agent_run", run.id, {"agent_name": agent_name})
     return run
 
 
 @router.get("/agent-runs")
-def agent_runs(user: CurrentUser = Depends(get_current_user)):
-    return list(store.agent_runs.values())
+def agent_runs(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    persisted = repository.list_agent_runs(db, user)
+    return persisted + list(store.agent_runs.values())
 
 
 @router.post("/generations/{generation_id}/feedback")
@@ -108,17 +181,23 @@ def generation_feedback(generation_id: str, request: FeedbackRequest, user: Curr
 
 
 @router.get("/activity")
-def activity(user: CurrentUser = Depends(get_current_user)):
-    return store.activity
+def activity(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    persisted = repository.list_activity(db, user)
+    return persisted or store.activity
 
 
 @router.get("/notifications")
-def notifications(user: CurrentUser = Depends(get_current_user)):
-    return store.notifications
+def notifications(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    persisted = repository.list_notifications(db, user)
+    return persisted or store.notifications
 
 
 @router.patch("/notifications/{notification_id}/read")
-def mark_notification_read(notification_id: str, user: CurrentUser = Depends(get_current_user)):
+def mark_notification_read(notification_id: str, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    persisted = repository.mark_notification_read(db, notification_id)
+    if persisted:
+        events.audit(user, "notification.read", "notification", notification_id)
+        return persisted
     for notification in store.notifications:
         if notification.id == notification_id:
             notification.read = True
@@ -128,8 +207,9 @@ def mark_notification_read(notification_id: str, user: CurrentUser = Depends(get
 
 
 @router.get("/usage/summary")
-def usage(user: CurrentUser = Depends(get_current_user)):
-    return store.usage_summary()
+def usage(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    persisted = repository.usage_summary(db, user)
+    return persisted
 
 
 @router.post("/growth-score")
@@ -164,18 +244,17 @@ def export_markdown(payload: dict, user: CurrentUser = Depends(get_current_user)
 
 
 @router.get("/background-jobs")
-def background_jobs(user: CurrentUser = Depends(get_current_user)):
-    return store.background_jobs
+def background_jobs(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    persisted = repository.list_jobs(db, user)
+    return persisted or store.background_jobs
 
 
 @router.post("/background-jobs")
-def enqueue_job(payload: dict, user: CurrentUser = Depends(get_current_user)):
-    return jobs.enqueue(
-        user,
-        payload.get("job_type", "content_generation"),
-        payload.get("payload", {}),
-        payload.get("idempotency_key"),
-    )
+def enqueue_job(payload: dict, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    persisted = repository.enqueue_job(db, user, payload)
+    if persisted:
+        return persisted
+    return jobs.enqueue(user, payload.get("job_type", "content_generation"), payload.get("payload", {}), payload.get("idempotency_key"))
 
 
 @router.post("/telegram/webhook")
@@ -212,8 +291,8 @@ def admin_users(user: CurrentUser = Depends(get_admin_user)):
 
 
 @admin_router.get("/workspaces")
-def admin_workspaces(user: CurrentUser = Depends(get_admin_user)):
-    return list(store.workspaces.values())
+def admin_workspaces(user: CurrentUser = Depends(get_admin_user), db: Session = Depends(get_db)):
+    return repository.list_workspaces(db, user)
 
 
 @admin_router.get("/subscriptions")
@@ -227,8 +306,8 @@ def admin_generations(user: CurrentUser = Depends(get_admin_user)):
 
 
 @admin_router.get("/agent-runs")
-def admin_agent_runs(user: CurrentUser = Depends(get_admin_user)):
-    return list(store.agent_runs.values())
+def admin_agent_runs(user: CurrentUser = Depends(get_admin_user), db: Session = Depends(get_db)):
+    return repository.list_agent_runs(db, user) + list(store.agent_runs.values())
 
 
 @admin_router.get("/errors")
@@ -242,15 +321,17 @@ def admin_feedback(user: CurrentUser = Depends(get_admin_user)):
 
 
 @admin_router.get("/usage")
-def admin_usage(user: CurrentUser = Depends(get_admin_user)):
-    return store.usage_summary()
+def admin_usage(user: CurrentUser = Depends(get_admin_user), db: Session = Depends(get_db)):
+    return repository.usage_summary(db, user)
 
 
 @admin_router.get("/audit-logs")
-def admin_audit_logs(user: CurrentUser = Depends(get_admin_user)):
-    return store.audit_logs
+def admin_audit_logs(user: CurrentUser = Depends(get_admin_user), db: Session = Depends(get_db)):
+    persisted = repository.admin_audit_logs(db)
+    return persisted or store.audit_logs
 
 
 @admin_router.get("/background-jobs")
-def admin_background_jobs(user: CurrentUser = Depends(get_admin_user)):
-    return store.background_jobs
+def admin_background_jobs(user: CurrentUser = Depends(get_admin_user), db: Session = Depends(get_db)):
+    persisted = repository.list_jobs(db, user)
+    return persisted or store.background_jobs

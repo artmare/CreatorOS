@@ -53,6 +53,7 @@ class ProducerOrchestrator:
             memory_used=memory,
             model=model,
             result={"text": result_text, "validation": validation},
+            token_estimate=tokens,
             cost_estimate=cost,
             validation_status=str(validation["status"]),
             status="completed",

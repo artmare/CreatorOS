@@ -25,9 +25,11 @@ engine = create_engine(
 )
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, class_=Session)
+_initialized = False
 
 
 def get_db() -> Generator[Session, None, None]:
+    init_database()
     db = SessionLocal()
     try:
         yield db
@@ -36,8 +38,12 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_database() -> None:
+    global _initialized
+    if _initialized:
+        return
     # Local SQLite can bootstrap itself. Supabase/Postgres should use SQL migrations.
     if _engine_url().startswith("sqlite"):
         from app.db import models  # noqa: F401
 
         Base.metadata.create_all(bind=engine)
+    _initialized = True
