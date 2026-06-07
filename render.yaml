@@ -9,6 +9,8 @@ services:
     envVars:
       - key: APP_ENV
         value: production
+      - key: PYTHON_VERSION
+        value: 3.13.5
       - key: FRONTEND_ORIGIN
         sync: false
       - key: DATABASE_URL
@@ -65,6 +67,8 @@ services:
     envVars:
       - key: APP_ENV
         value: production
+      - key: PYTHON_VERSION
+        value: 3.13.5
       - key: DATABASE_URL
         sync: false
       - key: REDIS_URL

@@ -25,7 +25,7 @@
 
 Use the included root-level `render.yaml` blueprint for the API and worker, or create services manually. Render reads the service `buildCommand`, `startCommand`, `healthCheckPath`, and `envVars` from this file.
 
-The repo includes `.python-version` with `3.13` so Render does not fall back to its current default Python 3.14 runtime. The backend normalizes Supabase `postgres://` and `postgresql://` URLs to SQLAlchemy's `postgresql+psycopg://` driver and installs `psycopg[binary]`.
+The repo includes `.python-version` files with `3.13`, and `render.yaml` sets `PYTHON_VERSION=3.13.5`, so Render does not fall back to its current default Python 3.14 runtime. The backend normalizes Supabase `postgres://` and `postgresql://` URLs to SQLAlchemy's `postgresql+psycopg://` driver and installs `psycopg[binary]`.
 
 Create a Web Service manually:
 
@@ -37,6 +37,7 @@ uvicorn app.main:app --host 0.0.0.0 --port $PORT --app-dir backend
 Required API env vars:
 
 - `APP_ENV=production`
+- `PYTHON_VERSION=3.13.5`
 - `FRONTEND_ORIGIN=https://your-vercel-domain`
 - `DATABASE_URL`
 - `SUPABASE_URL`
@@ -79,9 +80,10 @@ Use the same backend env vars that affect jobs and providers, especially `DATABA
 3. Run `supabase/migrations/0001_creatoros_platform.sql`.
 4. Run `supabase/migrations/0002_creatoros_scale_policies.sql`.
 5. Run `supabase/migrations/0003_scripts_calendar_layer.sql`.
-6. Keep RLS enabled for all exposed tables.
-7. Grant Data API access only to the roles and tables you intend to expose.
-8. Use publishable keys in the frontend and secret/service-role keys only on the backend.
+6. Run `supabase/migrations/0004_performance_policy_cleanup.sql`.
+7. Keep RLS enabled for all exposed tables.
+8. Grant Data API access only to the roles and tables you intend to expose.
+9. Use publishable keys in the frontend and secret/service-role keys only on the backend.
 
 Migration verification query:
 
